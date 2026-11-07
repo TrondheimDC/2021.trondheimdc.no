@@ -1,0 +1,52 @@
+name: CD - Deploy
+
+on:
+  push:
+    branches: ["main"]
+
+  # Allows manual trigger from Actions tab
+  workflow_dispatch:
+
+concurrency:
+  group: "deploy"
+  cancel-in-progress: false
+
+env:
+  DEPLOY_PATH: /var/www/sites/2021.trondheimdc.no/public
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Only the web files go to the server: no README, docs or workflow files.
+      - name: Stage site
+        run: |
+          mkdir -p _site
+          cp -r index.html robots.txt favicon.ico css js img fonts _site/
+
+      - name: Setup SSH
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          ssh-keyscan -H "${{ secrets.SSH_HOST }}" >> ~/.ssh/known_hosts
+
+      - name: Deploy to server via rsync
+        run: |
+          rsync -rlvz --delete \
+            -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
+            _site/ \
+            "${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}:${{ env.DEPLOY_PATH }}/"
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
+
+      - name: Smoke test
+        run: |
+          curl -fsSI https://2021.trondheimdc.no/ | head -1
+          curl -fsSI https://2021.trondheimdc.no/css/app.css | head -1
+          curl -fsSI http://2021.trondheimdc.no/ | grep -i '^location: https://'
